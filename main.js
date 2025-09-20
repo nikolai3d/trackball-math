@@ -1,0 +1,181 @@
+// Scene setup
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('container').appendChild(renderer.domElement);
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+directionalLight.position.set(10, 10, 5);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+scene.add(directionalLight);
+
+// Create zeppelin geometry
+function createZeppelin() {
+    const group = new THREE.Group();
+    
+    // Main body (ellipsoid)
+    const bodyGeometry = new THREE.SphereGeometry(1, 32, 16);
+    bodyGeometry.scale(2.5, 0.8, 0.8);
+    const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x4444aa });
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.castShadow = true;
+    group.add(body);
+    
+    // Tail fins
+    const finGeometry = new THREE.ConeGeometry(0.3, 0.8, 4);
+    const finMaterial = new THREE.MeshLambertMaterial({ color: 0x666666 });
+    
+    // Vertical fin
+    const verticalFin = new THREE.Mesh(finGeometry, finMaterial);
+    verticalFin.position.set(-2.2, 0, 0);
+    verticalFin.rotation.z = Math.PI / 2;
+    verticalFin.castShadow = true;
+    group.add(verticalFin);
+    
+    // Horizontal fins
+    const horizontalFin1 = new THREE.Mesh(finGeometry, finMaterial);
+    horizontalFin1.position.set(-2.2, 0.4, 0);
+    horizontalFin1.rotation.x = Math.PI / 2;
+    horizontalFin1.rotation.z = Math.PI / 2;
+    horizontalFin1.castShadow = true;
+    group.add(horizontalFin1);
+    
+    const horizontalFin2 = new THREE.Mesh(finGeometry, finMaterial);
+    horizontalFin2.position.set(-2.2, -0.4, 0);
+    horizontalFin2.rotation.x = -Math.PI / 2;
+    horizontalFin2.rotation.z = Math.PI / 2;
+    horizontalFin2.castShadow = true;
+    group.add(horizontalFin2);
+    
+    // Gondola
+    const gondolaGeometry = new THREE.BoxGeometry(0.8, 0.3, 0.4);
+    const gondolaMaterial = new THREE.MeshLambertMaterial({ color: 0x8b4513 });
+    const gondola = new THREE.Mesh(gondolaGeometry, gondolaMaterial);
+    gondola.position.set(0, -1.2, 0);
+    gondola.castShadow = true;
+    group.add(gondola);
+    
+    return group;
+}
+
+const zeppelin = createZeppelin();
+scene.add(zeppelin);
+
+// Calculate bounding box center
+const box = new THREE.Box3().setFromObject(zeppelin);
+const center = box.getCenter(new THREE.Vector3());
+
+// Create a pivot group at the bounding box center
+const pivotGroup = new THREE.Group();
+pivotGroup.position.copy(center);
+scene.add(pivotGroup);
+
+// Move zeppelin to pivot group and adjust its position
+scene.remove(zeppelin);
+zeppelin.position.sub(center);
+pivotGroup.add(zeppelin);
+
+// Camera setup
+camera.position.set(5, 3, 5);
+camera.lookAt(center);
+
+// Mouse interaction variables
+let isMouseDown = false;
+let mouseButton = 0;
+let previousMousePosition = { x: 0, y: 0 };
+
+// Camera orbit variables
+let cameraDistance = Math.sqrt(camera.position.x ** 2 + camera.position.y ** 2 + camera.position.z ** 2);
+let cameraTheta = Math.atan2(camera.position.x, camera.position.z);
+let cameraPhi = Math.acos(camera.position.y / cameraDistance);
+
+// Mouse event handlers
+function onMouseDown(event) {
+    isMouseDown = true;
+    mouseButton = event.button;
+    previousMousePosition = { x: event.clientX, y: event.clientY };
+    event.preventDefault();
+}
+
+function onMouseUp(event) {
+    isMouseDown = false;
+    event.preventDefault();
+}
+
+function onMouseMove(event) {
+    if (!isMouseDown) return;
+
+    const deltaMove = {
+        x: event.clientX - previousMousePosition.x,
+        y: event.clientY - previousMousePosition.y
+    };
+
+    if (mouseButton === 0) { // Left click - trackball rotation
+        const rotationSpeed = 0.01;
+        
+        // Create rotation quaternions
+        const quaternionX = new THREE.Quaternion();
+        quaternionX.setFromAxisAngle(new THREE.Vector3(1, 0, 0), deltaMove.y * rotationSpeed);
+        
+        const quaternionY = new THREE.Quaternion();
+        quaternionY.setFromAxisAngle(new THREE.Vector3(0, 1, 0), deltaMove.x * rotationSpeed);
+        
+        // Apply rotations to pivot group
+        pivotGroup.quaternion.multiplyQuaternions(quaternionY, pivotGroup.quaternion);
+        pivotGroup.quaternion.multiplyQuaternions(quaternionX, pivotGroup.quaternion);
+        
+    } else if (mouseButton === 2) { // Right click - camera orbit
+        const orbitSpeed = 0.01;
+        
+        cameraTheta -= deltaMove.x * orbitSpeed;
+        cameraPhi += deltaMove.y * orbitSpeed;
+        
+        // Clamp phi to prevent flipping
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+        
+        // Update camera position
+        camera.position.x = cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+        camera.position.y = cameraDistance * Math.cos(cameraPhi);
+        camera.position.z = cameraDistance * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+        
+        camera.lookAt(center);
+    }
+
+    previousMousePosition = { x: event.clientX, y: event.clientY };
+    event.preventDefault();
+}
+
+function onContextMenu(event) {
+    event.preventDefault();
+}
+
+// Add event listeners
+renderer.domElement.addEventListener('mousedown', onMouseDown);
+renderer.domElement.addEventListener('mouseup', onMouseUp);
+renderer.domElement.addEventListener('mousemove', onMouseMove);
+renderer.domElement.addEventListener('contextmenu', onContextMenu);
+
+// Handle window resize
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', onWindowResize);
+
+// Render loop
+function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+}
+
+animate();
