@@ -234,25 +234,105 @@ const MatrixUtils = {
 
 // Object behavior class for trackball rotation using 4x4 matrices
 class ObjectBehavior {
-    constructor(object) {
+    constructor(camera, object, scene) {
+        this.camera = camera;
         this.object = object;
+        this.scene = scene;
         this.anchor = null;
         this.rotationSpeed = 0.01;
+        
+        // Persistent camera basis vectors
+        this.cameraXWorldSpace = new THREE.Vector4(1, 0, 0, 0);
+        this.cameraYWorldSpace = new THREE.Vector4(0, 1, 0, 0);
+        this.cameraZWorldSpace = new THREE.Vector4(0, 0, 1, 0);
+        
+        // Create visualization cylinders
+        this.createVisualizationCylinders();
+        
+        // Update basis vectors
+        this.updateCameraBasisVectors();
+    }
+    
+    createVisualizationCylinders() {
+        const cylinderGeometry = new THREE.CylinderGeometry(0.02, 0.02, 2, 8);
+        
+        // X-axis cylinder (red)
+        const xMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        this.xCylinder = new THREE.Mesh(cylinderGeometry, xMaterial);
+        this.xCylinder.visible = false;
+        this.scene.add(this.xCylinder);
+        
+        // Y-axis cylinder (green)
+        const yMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        this.yCylinder = new THREE.Mesh(cylinderGeometry, yMaterial);
+        this.yCylinder.visible = false;
+        this.scene.add(this.yCylinder);
+        
+        // Z-axis cylinder (blue)
+        const zMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+        this.zCylinder = new THREE.Mesh(cylinderGeometry, zMaterial);
+        this.zCylinder.visible = false;
+        this.scene.add(this.zCylinder);
+    }
+    
+    updateCameraBasisVectors() {
+        // Reset to identity vectors
+        this.cameraXWorldSpace.set(1, 0, 0, 0);
+        this.cameraYWorldSpace.set(0, 1, 0, 0);
+        this.cameraZWorldSpace.set(0, 0, 1, 0);
+        
+        // Transform by camera's world matrix
+        this.cameraXWorldSpace.applyMatrix4(this.camera.matrixWorld);
+        this.cameraYWorldSpace.applyMatrix4(this.camera.matrixWorld);
+        this.cameraZWorldSpace.applyMatrix4(this.camera.matrixWorld);
+        
+        // Update rotation basis matrices
         this.rotationBasis = MatrixUtils.createRotationalBasisTransform(
-            new THREE.Vector3(1, 0, 0),
-            new THREE.Vector3(0, 1, 0),
-            new THREE.Vector3(0, 0, 1),
+            new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z),
+            new THREE.Vector3(this.cameraYWorldSpace.x, this.cameraYWorldSpace.y, this.cameraYWorldSpace.z),
+            new THREE.Vector3(this.cameraZWorldSpace.x, this.cameraZWorldSpace.y, this.cameraZWorldSpace.z),
             this.object.position
         );
         this.rotationBasisInverse = this.rotationBasis.clone().invert();
-
+    }
+    
+    updateVisualizationCylinders() {
+        const pivotPos = this.object.position;
+        const axisLength = 1.0;
+        
+        // X-axis cylinder (red)
+        const xDir = new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z).normalize();
+        this.xCylinder.position.copy(pivotPos).add(xDir.clone().multiplyScalar(axisLength * 0.5));
+        this.xCylinder.lookAt(pivotPos.clone().add(xDir));
+        this.xCylinder.rotateX(Math.PI / 2);
+        
+        // Y-axis cylinder (green)
+        const yDir = new THREE.Vector3(this.cameraYWorldSpace.x, this.cameraYWorldSpace.y, this.cameraYWorldSpace.z).normalize();
+        this.yCylinder.position.copy(pivotPos).add(yDir.clone().multiplyScalar(axisLength * 0.5));
+        this.yCylinder.lookAt(pivotPos.clone().add(yDir));
+        this.yCylinder.rotateX(Math.PI / 2);
+        
+        // Z-axis cylinder (blue)
+        const zDir = new THREE.Vector3(this.cameraZWorldSpace.x, this.cameraZWorldSpace.y, this.cameraZWorldSpace.z).normalize();
+        this.zCylinder.position.copy(pivotPos).add(zDir.clone().multiplyScalar(axisLength * 0.5));
+        this.zCylinder.lookAt(pivotPos.clone().add(zDir));
+        this.zCylinder.rotateX(Math.PI / 2);
     }
 
     beginInteraction(event) {
+        // Update camera basis vectors at start of interaction
+        this.updateCameraBasisVectors();
+        
         this.anchor = {
             mousePosition: { x: event.clientX, y: event.clientY },
             matrix: this.object.matrix.clone()
         };
+        
+        // Show visualization cylinders
+        this.updateVisualizationCylinders();
+        this.xCylinder.visible = true;
+        this.yCylinder.visible = true;
+        this.zCylinder.visible = true;
     }
 
     continueInteraction(event) {
@@ -269,8 +349,10 @@ class ObjectBehavior {
         
 
         // Combine delta rotations: deltaMatrix = deltaRotationY * deltaRotationX
-        const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationY, deltaRotationX, this.rotationBasis);
+        //const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationX, this.rotationBasis);
         
+        const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationY, deltaRotationX, this.rotationBasis);
+
         // Apply: resultMatrix = deltaMatrix * anchorMatrix
         const resultMatrix = new THREE.Matrix4();
         resultMatrix.multiplyMatrices(deltaMatrix, this.anchor.matrix);
@@ -282,6 +364,11 @@ class ObjectBehavior {
 
     endInteraction() {
         this.anchor = null;
+        
+        // Hide visualization cylinders
+        this.xCylinder.visible = false;
+        this.yCylinder.visible = false;
+        this.zCylinder.visible = false;
     }
 }
 
@@ -350,7 +437,7 @@ class CameraBehavior {
 }
 
 // Create behavior instances
-const objectBehavior = new ObjectBehavior(pivotGroup);
+const objectBehavior = new ObjectBehavior(camera, pivotGroup, scene);
 const cameraBehavior = new CameraBehavior(camera, center);
 
 // Mouse interaction state
