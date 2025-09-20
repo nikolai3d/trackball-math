@@ -229,6 +229,44 @@ const MatrixUtils = {
             result.multiplyMatrices(result, matrices[i]);
         }
         return result;
+    },
+
+    // Create rotation matrix around arbitrary world axis
+    // Uses transform-to-basis approach:
+    // 1. Transform to space where AxisPoint is origin and AxisDirection is Z-axis
+    // 2. Rotate around Z-axis by specified angle
+    // 3. Transform back to world space
+    createAxisRotation(axisPoint, axisDirection, angle) {
+        // Normalize the axis direction
+        const zAxis = axisDirection.clone().normalize();
+        
+        // Create two perpendicular vectors to complete the basis
+        // Choose an arbitrary vector that's not parallel to zAxis
+        let tempVector = new THREE.Vector3(1, 0, 0);
+        if (Math.abs(zAxis.dot(tempVector)) > 0.9) {
+            tempVector.set(0, 1, 0);
+        }
+        
+        // Create orthogonal basis using cross products
+        const xAxis = new THREE.Vector3().crossVectors(tempVector, zAxis).normalize();
+        const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+        
+        // Step 1: Transform to rotational basis
+        // Move axisPoint to origin and align axisDirection with Z-axis
+        const toBasisTransform = this.createRotationalBasisTransform(
+            xAxis, yAxis, zAxis, axisPoint
+        );
+        
+        // Step 2: Rotation around Z-axis in the transformed space
+        const zRotation = this.createRotationZ(angle);
+        
+        // Step 3: Transform back to world space
+        const fromBasisTransform = this.createInverseRotationalBasisTransform(
+            xAxis, yAxis, zAxis, axisPoint
+        );
+        
+        // Combine all transformations: fromBasis * zRotation * toBasis
+        return this.multiplyMatrices(fromBasisTransform, zRotation, toBasisTransform);
     }
 };
 
@@ -294,6 +332,14 @@ class ObjectBehavior {
             this.object.position
         );
         this.rotationBasisInverse = this.rotationBasis.clone().invert();
+
+        const pivotPoint = new THREE.Vector3(this.object.position.x, this.object.position.y, this.object.position.z);
+        // Horizontal rotation axis is the world y axis
+        this.horizontalRotationAxisPoint = pivotPoint.clone();
+        this.horizontalRotationAxisDirection = new THREE.Vector3(0, 1, 0); 
+
+        this.verticalRotationAxisPoint = pivotPoint.clone();
+        this.verticalRotationAxisDirection = new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z)
     }
     
     updateVisualizationCylinders() {
@@ -344,14 +390,19 @@ class ObjectBehavior {
         };
 
         // Create delta rotation matrices
-        const deltaRotationY = MatrixUtils.createRotationY(deltaMove.x * this.rotationSpeed);
-        const deltaRotationX = MatrixUtils.createRotationX(deltaMove.y * this.rotationSpeed);
-        
+        // const deltaRotationY = MatrixUtils.createRotationY(deltaMove.x * this.rotationSpeed);
+        // const deltaRotationX = MatrixUtils.createRotationX(deltaMove.y * this.rotationSpeed);
+        // const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationY, deltaRotationX, this.rotationBasis);
 
-        // Combine delta rotations: deltaMatrix = deltaRotationY * deltaRotationX
-        //const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationX, this.rotationBasis);
-        
-        const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationY, deltaRotationX, this.rotationBasis);
+        const deltaRotationHorizontal = MatrixUtils.createAxisRotation(this.horizontalRotationAxisPoint, this.horizontalRotationAxisDirection, deltaMove.x * this.rotationSpeed);
+        const deltaRotationVertical = MatrixUtils.createAxisRotation(this.verticalRotationAxisPoint, this.verticalRotationAxisDirection, deltaMove.y * this.rotationSpeed);
+        const deltaMatrix = MatrixUtils.multiplyMatrices(deltaRotationVertical, deltaRotationHorizontal);
+
+        // const deltaRotationHorizontal = MatrixUtils.createAxisRotation(this.horizontalRotationAxisPoint, this.horizontalRotationAxisDirection, deltaMove.x * this.rotationSpeed);
+        // const deltaMatrix = deltaRotationHorizontal.clone();
+
+        // const deltaRotationVertical = MatrixUtils.createAxisRotation(this.verticalRotationAxisPoint, this.verticalRotationAxisDirection, deltaMove.y * this.rotationSpeed);
+        // const deltaMatrix = deltaRotationVertical.clone();
 
         // Apply: resultMatrix = deltaMatrix * anchorMatrix
         const resultMatrix = new THREE.Matrix4();
