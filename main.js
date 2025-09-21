@@ -108,11 +108,15 @@ function createTrackballSphere(radius) {
     return wireframe;
 }
 
-function createTrackballDebugLine(color) {
+function createTrackballSpoke(color) {
+    const spokeGroup = new THREE.Group();
+    spokeGroup.visible = false;
+    spokeGroup.frustumCulled = false;
+
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(6);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.LineDashedMaterial({
+    const lineMaterial = new THREE.LineDashedMaterial({
         color,
         dashSize: 0.08,
         gapSize: 0.05,
@@ -121,17 +125,14 @@ function createTrackballDebugLine(color) {
         depthTest: false,
         depthWrite: false
     });
-    const line = new THREE.Line(geometry, material);
-    line.visible = false;
+    const line = new THREE.Line(geometry, lineMaterial);
     line.frustumCulled = false;
     line.renderOrder = 6;
-    return line;
-}
+    spokeGroup.add(line);
 
-function createTrackballDebugPoint(color) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-    const material = new THREE.PointsMaterial({
+    const pointGeometry = new THREE.BufferGeometry();
+    pointGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+    const pointMaterial = new THREE.PointsMaterial({
         color,
         size: 4,
         sizeAttenuation: false,
@@ -140,11 +141,12 @@ function createTrackballDebugPoint(color) {
         depthTest: false,
         depthWrite: false
     });
-    const point = new THREE.Points(geometry, material);
-    point.visible = false;
+    const point = new THREE.Points(pointGeometry, pointMaterial);
     point.frustumCulled = false;
     point.renderOrder = 7;
-    return point;
+    spokeGroup.add(point);
+
+    return { group: spokeGroup, line, point };
 }
 
 const trackballSphereGroup = new THREE.Group();
@@ -154,43 +156,42 @@ scene.add(trackballSphereGroup);
 const trackballSphere = createTrackballSphere(trackballSphereRadius);
 trackballSphereGroup.add(trackballSphere);
 
-const trackballAnchorLine = createTrackballDebugLine(0xffe066);
-const trackballAnchorPoint = createTrackballDebugPoint(0xffe066);
-const trackballCurrentLine = createTrackballDebugLine(0xffffff);
-const trackballCurrentPoint = createTrackballDebugPoint(0xffffff);
+const anchorSpoke = createTrackballSpoke(0xffe066);
+const currentSpoke = createTrackballSpoke(0xffffff);
 
-trackballSphereGroup.add(trackballAnchorLine);
-trackballSphereGroup.add(trackballAnchorPoint);
-trackballSphereGroup.add(trackballCurrentLine);
-trackballSphereGroup.add(trackballCurrentPoint);
+trackballSphereGroup.add(anchorSpoke.group);
+trackballSphereGroup.add(currentSpoke.group);
 
 const trackballSphereWorldPosition = new THREE.Vector3();
 
-function updateTrackballDebugElement(line, point, position) {
-    const linePositions = line.geometry.attributes.position.array;
+function updateTrackballSpoke(spoke, position) {
+    const linePositions = spoke.line.geometry.attributes.position.array;
     linePositions[0] = 0;
     linePositions[1] = 0;
     linePositions[2] = 0;
     linePositions[3] = position.x;
     linePositions[4] = position.y;
     linePositions[5] = position.z;
-    line.geometry.attributes.position.needsUpdate = true;
-    if (typeof line.computeLineDistances === 'function') {
-        line.computeLineDistances();
+    spoke.line.geometry.attributes.position.needsUpdate = true;
+    if (typeof spoke.line.computeLineDistances === 'function') {
+        spoke.line.computeLineDistances();
     }
-    line.visible = true;
 
-    const pointPositions = point.geometry.attributes.position.array;
+    const pointPositions = spoke.point.geometry.attributes.position.array;
     pointPositions[0] = position.x;
     pointPositions[1] = position.y;
     pointPositions[2] = position.z;
-    point.geometry.attributes.position.needsUpdate = true;
-    point.visible = true;
+    spoke.point.geometry.attributes.position.needsUpdate = true;
+
+    spoke.group.visible = true;
+    spoke.line.visible = true;
+    spoke.point.visible = true;
 }
 
-function hideTrackballDebugElement(line, point) {
-    line.visible = false;
-    point.visible = false;
+function hideTrackballSpoke(spoke) {
+    spoke.group.visible = false;
+    spoke.line.visible = false;
+    spoke.point.visible = false;
 }
 
 // Create ground plane grid and world axis widget
@@ -790,7 +791,7 @@ class ObjectBehavior {
         this.yCylinder.visible = false;
         this.zCylinder.visible = false;
 
-        hideTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint);
+        hideTrackballSpoke(anchorSpoke);
     }
 }
 
@@ -865,17 +866,17 @@ const cameraBehavior = new CameraBehavior(camera, center);
 function updateTrackballAnchorProjection(normalized) {
     if (!normalized) return;
     const projection = objectBehavior.getTrackballProjectionPoint(normalized);
-    updateTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint, projection);
+    updateTrackballSpoke(anchorSpoke, projection);
 }
 
 function updateTrackballCurrentProjection(normalized) {
     if (!normalized) {
-        hideTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint);
+        hideTrackballSpoke(currentSpoke);
         return;
     }
 
     const projection = objectBehavior.getTrackballProjectionPoint(normalized);
-    updateTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint, projection);
+    updateTrackballSpoke(currentSpoke, projection);
 }
 
 function updateTrackballCircleDebug(event) {
@@ -886,8 +887,8 @@ window.addEventListener('mousemove', updateTrackballCircleDebug);
 window.addEventListener('mouseleave', () => {
     setTrackballCircleOverlayState(false);
     trackballInfoPanel.textContent = defaultTrackballInfoText;
-    hideTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint);
-    hideTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint);
+    hideTrackballSpoke(currentSpoke);
+    hideTrackballSpoke(anchorSpoke);
 });
 
 // Mouse interaction state
@@ -945,8 +946,8 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     updateTrackballCircleOverlaySize();
     trackballInfoPanel.textContent = defaultTrackballInfoText;
-    hideTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint);
-    hideTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint);
+    hideTrackballSpoke(currentSpoke);
+    hideTrackballSpoke(anchorSpoke);
 }
 window.addEventListener('resize', onWindowResize);
 
