@@ -73,6 +73,10 @@ scene.add(zeppelin);
 // Calculate bounding box center
 const box = new THREE.Box3().setFromObject(zeppelin);
 const center = box.getCenter(new THREE.Vector3());
+const boundingSize = new THREE.Vector3();
+box.getSize(boundingSize);
+const boundingDiagonal = boundingSize.length();
+const trackballSphereRadius = boundingDiagonal * 0.65; // half diagonal scaled by 1.3
 
 // Create a pivot group at the bounding box center
 const pivotGroup = new THREE.Group();
@@ -87,6 +91,107 @@ pivotGroup.add(zeppelin);
 // Camera setup
 camera.position.set(5, 3, 5);
 camera.lookAt(center);
+
+function createTrackballSphere(radius) {
+    const sphereGeometry = new THREE.SphereGeometry(radius, 32, 24);
+    const wireframeGeometry = new THREE.WireframeGeometry(sphereGeometry);
+    const material = new THREE.LineBasicMaterial({
+        color: 0x66ccff,
+        opacity: 0.4,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false
+    });
+    const wireframe = new THREE.LineSegments(wireframeGeometry, material);
+    wireframe.renderOrder = 5;
+    wireframe.frustumCulled = false;
+    return wireframe;
+}
+
+function createTrackballDebugLine(color) {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(6);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.LineDashedMaterial({
+        color,
+        dashSize: 0.08,
+        gapSize: 0.05,
+        transparent: true,
+        opacity: 0.85,
+        depthTest: false,
+        depthWrite: false
+    });
+    const line = new THREE.Line(geometry, material);
+    line.visible = false;
+    line.frustumCulled = false;
+    line.renderOrder = 6;
+    return line;
+}
+
+function createTrackballDebugPoint(color) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+    const material = new THREE.PointsMaterial({
+        color,
+        size: 4,
+        sizeAttenuation: false,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false,
+        depthWrite: false
+    });
+    const point = new THREE.Points(geometry, material);
+    point.visible = false;
+    point.frustumCulled = false;
+    point.renderOrder = 7;
+    return point;
+}
+
+const trackballSphereGroup = new THREE.Group();
+trackballSphereGroup.position.copy(center);
+scene.add(trackballSphereGroup);
+
+const trackballSphere = createTrackballSphere(trackballSphereRadius);
+trackballSphereGroup.add(trackballSphere);
+
+const trackballAnchorLine = createTrackballDebugLine(0xffe066);
+const trackballAnchorPoint = createTrackballDebugPoint(0xffe066);
+const trackballCurrentLine = createTrackballDebugLine(0xffffff);
+const trackballCurrentPoint = createTrackballDebugPoint(0xffffff);
+
+trackballSphereGroup.add(trackballAnchorLine);
+trackballSphereGroup.add(trackballAnchorPoint);
+trackballSphereGroup.add(trackballCurrentLine);
+trackballSphereGroup.add(trackballCurrentPoint);
+
+const trackballSphereWorldPosition = new THREE.Vector3();
+
+function updateTrackballDebugElement(line, point, position) {
+    const linePositions = line.geometry.attributes.position.array;
+    linePositions[0] = 0;
+    linePositions[1] = 0;
+    linePositions[2] = 0;
+    linePositions[3] = position.x;
+    linePositions[4] = position.y;
+    linePositions[5] = position.z;
+    line.geometry.attributes.position.needsUpdate = true;
+    if (typeof line.computeLineDistances === 'function') {
+        line.computeLineDistances();
+    }
+    line.visible = true;
+
+    const pointPositions = point.geometry.attributes.position.array;
+    pointPositions[0] = position.x;
+    pointPositions[1] = position.y;
+    pointPositions[2] = position.z;
+    point.geometry.attributes.position.needsUpdate = true;
+    point.visible = true;
+}
+
+function hideTrackballDebugElement(line, point) {
+    line.visible = false;
+    point.visible = false;
+}
 
 // Create ground plane grid and world axis widget
 function createGroundPlaneGrid() {
@@ -247,6 +352,7 @@ function updateTrackballDebugDisplay(clientX, clientY, normalizedOverride = null
     const radiusSquared = normalized.x * normalized.x + normalized.y * normalized.y;
     setTrackballCircleOverlayState(radiusSquared <= 1);
     updateTrackballInfoPanel(clientX, clientY, normalized);
+    updateTrackballCurrentProjection(normalized);
     return normalized;
 }
 
@@ -465,7 +571,7 @@ const MatrixUtils = {
         const rotationAxis = new THREE.Vector3().crossVectors(startSphere, endSphere);
         
         // Calculate rotation angle
-        const rotationAngle = startSphere.angleTo(endSphere) * 5.0;
+        const rotationAngle = startSphere.angleTo(endSphere);
         
         // Return identity matrix if no rotation needed
         if (rotationAngle < 0.0001 || rotationAxis.length() < 0.0001) {
@@ -487,7 +593,7 @@ class ObjectBehavior {
         this.object = object;
         this.scene = scene;
         this.anchor = null;
-        this.trackballRadius = 4.0;
+        this.trackballRadius = 1.0;
         this.sensitivity = 1.0;
         
         // Persistent camera basis vectors
@@ -582,6 +688,7 @@ class ObjectBehavior {
         };
 
         updateTrackballDebugDisplay(event.clientX, event.clientY, normalizedStart);
+        updateTrackballAnchorProjection(normalizedStart);
 
         // Show visualization cylinders
         this.updateVisualizationCylinders();
@@ -597,6 +704,7 @@ class ObjectBehavior {
         const currentNormalized = this.getNormalizedTrackballCoordinates(event.clientX, event.clientY);
 
         updateTrackballDebugDisplay(event.clientX, event.clientY, currentNormalized);
+        updateTrackballAnchorProjection(this.anchor.normalizedStart);
         
         // Apply sensitivity scaling
         const startPos = {
@@ -650,6 +758,30 @@ class ObjectBehavior {
         };
     }
 
+    getTrackballProjectionPoint(normalized) {
+        const radius = this.trackballRadius;
+        const scaledX = normalized.x * this.sensitivity;
+        const scaledY = normalized.y * this.sensitivity;
+        const projection = MatrixUtils.screenToSphere(scaledX, scaledY, radius);
+
+        if (projection.lengthSq() === 0) {
+            return new THREE.Vector3(0, 0, trackballSphereRadius);
+        }
+
+        if (radius !== 0) {
+            projection.divideScalar(radius);
+        }
+
+        const lengthSq = projection.lengthSq();
+        if (lengthSq > 0) {
+            projection.normalize();
+        } else {
+            projection.set(0, 0, 1);
+        }
+
+        return projection.multiplyScalar(trackballSphereRadius);
+    }
+
     endInteraction() {
         this.anchor = null;
 
@@ -657,6 +789,8 @@ class ObjectBehavior {
         this.xCylinder.visible = false;
         this.yCylinder.visible = false;
         this.zCylinder.visible = false;
+
+        hideTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint);
     }
 }
 
@@ -728,6 +862,22 @@ class CameraBehavior {
 const objectBehavior = new ObjectBehavior(camera, pivotGroup, scene);
 const cameraBehavior = new CameraBehavior(camera, center);
 
+function updateTrackballAnchorProjection(normalized) {
+    if (!normalized) return;
+    const projection = objectBehavior.getTrackballProjectionPoint(normalized);
+    updateTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint, projection);
+}
+
+function updateTrackballCurrentProjection(normalized) {
+    if (!normalized) {
+        hideTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint);
+        return;
+    }
+
+    const projection = objectBehavior.getTrackballProjectionPoint(normalized);
+    updateTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint, projection);
+}
+
 function updateTrackballCircleDebug(event) {
     updateTrackballDebugDisplay(event.clientX, event.clientY);
 }
@@ -736,6 +886,8 @@ window.addEventListener('mousemove', updateTrackballCircleDebug);
 window.addEventListener('mouseleave', () => {
     setTrackballCircleOverlayState(false);
     trackballInfoPanel.textContent = defaultTrackballInfoText;
+    hideTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint);
+    hideTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint);
 });
 
 // Mouse interaction state
@@ -793,12 +945,20 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     updateTrackballCircleOverlaySize();
     trackballInfoPanel.textContent = defaultTrackballInfoText;
+    hideTrackballDebugElement(trackballCurrentLine, trackballCurrentPoint);
+    hideTrackballDebugElement(trackballAnchorLine, trackballAnchorPoint);
 }
 window.addEventListener('resize', onWindowResize);
+
+function updateTrackballSphereDebug() {
+    trackballSphereGroup.position.copy(objectBehavior.object.position);
+    trackballSphereGroup.quaternion.copy(camera.quaternion);
+}
 
 // Render loop
 function animate() {
     requestAnimationFrame(animate);
+    updateTrackballSphereDebug();
     renderer.render(scene, camera);
 }
 
