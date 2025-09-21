@@ -28,6 +28,36 @@
             border-radius: 5px;
             z-index: 100;
         }
+        
+        #toggles {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        
+        #toggles button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        #toggles button:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        #toggles button.active {
+            background: rgba(100, 150, 255, 0.6);
+            border-color: rgba(100, 150, 255, 0.8);
+        }
     </style>
 </head>
 <body>
@@ -35,6 +65,9 @@
     <div id="instructions">
         <div>Left-click + drag: Rotate object (trackball)</div>
         <div>Right-click + drag: Orbit camera</div>
+    </div>
+    <div id="toggles">
+        <button id="gridToggle" class="active">Grid Overlay</button>
     </div>
 
     <script src="three.min.js"></script>

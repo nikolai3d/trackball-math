@@ -88,6 +88,96 @@ pivotGroup.add(zeppelin);
 camera.position.set(5, 3, 5);
 camera.lookAt(center);
 
+// Create ground plane grid and world axis widget
+function createGroundPlaneGrid() {
+    const gridGroup = new THREE.Group();
+    
+    // Grid parameters
+    const gridSize = 20;
+    const gridDivisions = 20;
+    const gridColor = 0x444444;
+    
+    // Create grid helper
+    const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, gridColor, gridColor);
+    gridHelper.material.opacity = 0.3;
+    gridHelper.material.transparent = true;
+    gridGroup.add(gridHelper);
+    
+    // Create world axis widget with dashed lines
+    const axisLength = 5;
+    
+    // X-axis (red, dashed)
+    const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(axisLength, 0, 0)
+    ]);
+    const xAxisMaterial = new THREE.LineDashedMaterial({ 
+        color: 0xff0000, 
+        dashSize: 0.2, 
+        gapSize: 0.1,
+        opacity: 0.8,
+        transparent: true
+    });
+    const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
+    xAxis.computeLineDistances();
+    gridGroup.add(xAxis);
+    
+    // Y-axis (green, dashed)
+    const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, axisLength, 0)
+    ]);
+    const yAxisMaterial = new THREE.LineDashedMaterial({ 
+        color: 0x00ff00, 
+        dashSize: 0.2, 
+        gapSize: 0.1,
+        opacity: 0.8,
+        transparent: true
+    });
+    const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
+    yAxis.computeLineDistances();
+    gridGroup.add(yAxis);
+    
+    // Z-axis (blue, dashed)
+    const zAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, axisLength)
+    ]);
+    const zAxisMaterial = new THREE.LineDashedMaterial({ 
+        color: 0x0000ff, 
+        dashSize: 0.2, 
+        gapSize: 0.1,
+        opacity: 0.8,
+        transparent: true
+    });
+    const zAxis = new THREE.Line(zAxisGeometry, zAxisMaterial);
+    zAxis.computeLineDistances();
+    gridGroup.add(zAxis);
+    
+    return gridGroup;
+}
+
+// Create and add grid overlay
+const gridOverlay = createGroundPlaneGrid();
+scene.add(gridOverlay);
+
+// Grid toggle functionality
+let gridVisible = true;
+const gridToggleButton = document.getElementById('gridToggle');
+
+gridToggleButton.addEventListener('click', () => {
+    gridVisible = !gridVisible;
+    gridOverlay.visible = gridVisible;
+    
+    if (gridVisible) {
+        gridToggleButton.classList.add('active');
+        gridToggleButton.textContent = 'Grid Overlay';
+    } else {
+        gridToggleButton.classList.remove('active');
+        gridToggleButton.textContent = 'Show Grid';
+    }
+});
+
 // Shared matrix utility functions
 const MatrixUtils = {
     // Create rotation matrix around X axis
