@@ -535,7 +535,7 @@ class ObjectBehavior {
         };
         
         // Create virtual trackball rotation in camera space
-        let deltaMatrix = MatrixUtils.createTrackballRotation(
+        const trackballDeltaMatrix = MatrixUtils.createTrackballRotation(
             startPos, 
             endPos, 
             this.object.position, 
@@ -543,9 +543,9 @@ class ObjectBehavior {
         );
         
         // Transform rotation to camera-aligned space
-        deltaMatrix = MatrixUtils.multiplyMatrices(
+       const deltaMatrix = MatrixUtils.multiplyMatrices(
             this.rotationBasisInverse, 
-            deltaMatrix, 
+            trackballDeltaMatrix, 
             this.rotationBasis
         );
         
