@@ -178,6 +178,82 @@ gridToggleButton.addEventListener('click', () => {
     }
 });
 
+// Trackball unit-circle debug overlay
+const trackballCircleOverlay = document.createElement('div');
+trackballCircleOverlay.id = 'trackballCircleOverlay';
+Object.assign(trackballCircleOverlay.style, {
+    position: 'absolute',
+    border: '2px dashed rgba(255, 255, 255, 0.35)',
+    borderRadius: '50%',
+    pointerEvents: 'none',
+    boxSizing: 'border-box',
+    zIndex: '50',
+    transition: 'border-color 0.15s ease, box-shadow 0.15s ease'
+});
+document.body.appendChild(trackballCircleOverlay);
+
+const trackballInfoPanel = document.createElement('div');
+trackballInfoPanel.id = 'trackballInfoPanel';
+Object.assign(trackballInfoPanel.style, {
+    position: 'absolute',
+    bottom: '10px',
+    left: '10px',
+    color: '#ffffff',
+    background: 'rgba(0, 0, 0, 0.6)',
+    padding: '6px 10px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontFamily: 'monospace',
+    letterSpacing: '0.5px',
+    zIndex: '120',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none'
+});
+document.body.appendChild(trackballInfoPanel);
+
+const defaultTrackballInfoText = 'Overlay px (x: 0.00000, y: 0.00000) | Normalized (x: 0.00000, y: 0.00000)';
+
+function updateTrackballCircleOverlaySize() {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const diameter = Math.min(rect.width, rect.height);
+    const left = rect.left + (rect.width - diameter) / 2;
+    const top = rect.top + (rect.height - diameter) / 2;
+
+    trackballCircleOverlay.style.width = `${diameter}px`;
+    trackballCircleOverlay.style.height = `${diameter}px`;
+    trackballCircleOverlay.style.left = `${left}px`;
+    trackballCircleOverlay.style.top = `${top}px`;
+}
+
+function setTrackballCircleOverlayState(isInside) {
+    if (isInside) {
+        trackballCircleOverlay.style.borderColor = 'rgba(100, 200, 255, 0.85)';
+        trackballCircleOverlay.style.boxShadow = '0 0 10px rgba(100, 200, 255, 0.55)';
+    } else {
+        trackballCircleOverlay.style.borderColor = 'rgba(255, 140, 140, 0.5)';
+        trackballCircleOverlay.style.boxShadow = 'none';
+    }
+}
+
+function updateTrackballInfoPanel(clientX, clientY, normalized) {
+    const viewportRect = renderer.domElement.getBoundingClientRect();
+    const pixelX = clientX - viewportRect.left;
+    const pixelY = clientY - viewportRect.top;
+    trackballInfoPanel.textContent = `Overlay px (x: ${pixelX.toFixed(5)}, y: ${pixelY.toFixed(5)}) | Normalized (x: ${normalized.x.toFixed(5)}, y: ${normalized.y.toFixed(5)})`;
+}
+
+function updateTrackballDebugDisplay(clientX, clientY, normalizedOverride = null) {
+    const normalized = normalizedOverride || objectBehavior.getNormalizedTrackballCoordinates(clientX, clientY);
+    const radiusSquared = normalized.x * normalized.x + normalized.y * normalized.y;
+    setTrackballCircleOverlayState(radiusSquared <= 1);
+    updateTrackballInfoPanel(clientX, clientY, normalized);
+    return normalized;
+}
+
+updateTrackballCircleOverlaySize();
+trackballInfoPanel.textContent = defaultTrackballInfoText;
+setTrackballCircleOverlayState(false);
+
 // Shared matrix utility functions
 const MatrixUtils = {
     // Create rotation matrix around X axis
@@ -495,18 +571,18 @@ class ObjectBehavior {
     beginInteraction(event) {
         // Update camera basis vectors at start of interaction
         this.updateCameraBasisVectors();
-        
+
         // Convert screen coordinates to normalized trackball coordinates
-        const rect = renderer.domElement.getBoundingClientRect();
-        const normalizedX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        const normalizedY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
+        const normalizedStart = this.getNormalizedTrackballCoordinates(event.clientX, event.clientY);
+
         this.anchor = {
             mousePosition: { x: event.clientX, y: event.clientY },
-            normalizedStart: { x: normalizedX, y: normalizedY },
+            normalizedStart,
             matrix: this.object.matrix.clone()
         };
-        
+
+        updateTrackballDebugDisplay(event.clientX, event.clientY, normalizedStart);
+
         // Show visualization cylinders
         this.updateVisualizationCylinders();
         this.xCylinder.visible = true;
@@ -518,11 +594,9 @@ class ObjectBehavior {
         if (!this.anchor) return;
 
         // Convert current screen coordinates to normalized trackball coordinates
-        const rect = renderer.domElement.getBoundingClientRect();
-        const normalizedX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        const normalizedY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        
-        const currentNormalized = { x: normalizedX, y: normalizedY };
+        const currentNormalized = this.getNormalizedTrackballCoordinates(event.clientX, event.clientY);
+
+        updateTrackballDebugDisplay(event.clientX, event.clientY, currentNormalized);
         
         // Apply sensitivity scaling
         const startPos = {
@@ -558,9 +632,27 @@ class ObjectBehavior {
         this.object.matrixAutoUpdate = false;
     }
 
+    getNormalizedTrackballCoordinates(clientX, clientY) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const minDimension = Math.min(rect.width, rect.height);
+
+        if (minDimension === 0) {
+            return { x: 0, y: 0 };
+        }
+
+        const halfSize = minDimension / 2;
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        return {
+            x: (clientX - centerX) / halfSize,
+            y: (centerY - clientY) / halfSize
+        };
+    }
+
     endInteraction() {
         this.anchor = null;
-        
+
         // Hide visualization cylinders
         this.xCylinder.visible = false;
         this.yCylinder.visible = false;
@@ -636,6 +728,16 @@ class CameraBehavior {
 const objectBehavior = new ObjectBehavior(camera, pivotGroup, scene);
 const cameraBehavior = new CameraBehavior(camera, center);
 
+function updateTrackballCircleDebug(event) {
+    updateTrackballDebugDisplay(event.clientX, event.clientY);
+}
+
+window.addEventListener('mousemove', updateTrackballCircleDebug);
+window.addEventListener('mouseleave', () => {
+    setTrackballCircleOverlayState(false);
+    trackballInfoPanel.textContent = defaultTrackballInfoText;
+});
+
 // Mouse interaction state
 let isMouseDown = false;
 let currentBehavior = null;
@@ -689,6 +791,8 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    updateTrackballCircleOverlaySize();
+    trackballInfoPanel.textContent = defaultTrackballInfoText;
 }
 window.addEventListener('resize', onWindowResize);
 
