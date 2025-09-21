@@ -357,6 +357,50 @@ const MatrixUtils = {
         
         // Combine all transformations: fromBasis * zRotation * toBasis
         return this.multiplyMatrices(fromBasisTransform, zRotation, toBasisTransform);
+    },
+
+    // Virtual Trackball mathematics
+    // Map normalized screen coordinates [-1,1] to unit sphere surface
+    // Uses Shoemake's trackball algorithm for robust sphere mapping
+    screenToSphere(x, y, radius = 1.0) {
+        // Input x,y should be normalized screen coordinates in range [-1, 1]
+        const lengthSquared = x*x + y*y;
+        const radiusSquared = radius * radius;
+        
+        if (lengthSquared <= radiusSquared * 0.5) {
+            // Inside the sphere - use true sphere equation: z = sqrt(r² - x² - y²)
+            const z = Math.sqrt(radiusSquared - lengthSquared);
+            return new THREE.Vector3(x, y, z);
+        } else {
+            // Outside sphere - use hyperbolic sheet to avoid discontinuity
+            // This creates a smooth transition at the sphere boundary
+            const z = radiusSquared / (2.0 * Math.sqrt(lengthSquared));
+            return new THREE.Vector3(x, y, z);
+        }
+    },
+
+    // Create rotation matrix from virtual trackball movement
+    createTrackballRotation(startScreenPos, endScreenPos, pivotPoint, radius = 1.0) {
+        // Map screen positions to sphere
+        const startSphere = this.screenToSphere(startScreenPos.x, startScreenPos.y, radius);
+        const endSphere = this.screenToSphere(endScreenPos.x, endScreenPos.y, radius);
+        
+        // Calculate rotation axis (cross product of sphere positions)
+        const rotationAxis = new THREE.Vector3().crossVectors(startSphere, endSphere);
+        
+        // Calculate rotation angle
+        const rotationAngle = startSphere.angleTo(endSphere) * 5.0;
+        
+        // Return identity matrix if no rotation needed
+        if (rotationAngle < 0.0001 || rotationAxis.length() < 0.0001) {
+            return new THREE.Matrix4(); // identity matrix
+        }
+        
+        // Normalize the rotation axis
+        rotationAxis.normalize();
+        
+        // Create rotation matrix around the calculated axis
+        return this.createAxisRotation(pivotPoint, rotationAxis, rotationAngle);
     }
 };
 
@@ -367,7 +411,8 @@ class ObjectBehavior {
         this.object = object;
         this.scene = scene;
         this.anchor = null;
-        this.rotationSpeed = 0.01;
+        this.trackballRadius = 4.0;
+        this.sensitivity = 1.0;
         
         // Persistent camera basis vectors
         this.cameraXWorldSpace = new THREE.Vector4(1, 0, 0, 0);
@@ -414,7 +459,7 @@ class ObjectBehavior {
         this.cameraYWorldSpace.applyMatrix4(this.camera.matrixWorld);
         this.cameraZWorldSpace.applyMatrix4(this.camera.matrixWorld);
         
-        // Update rotation basis matrices
+        // Update rotation basis matrices for camera-aligned rotations
         this.rotationBasis = MatrixUtils.createRotationalBasisTransform(
             new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z),
             new THREE.Vector3(this.cameraYWorldSpace.x, this.cameraYWorldSpace.y, this.cameraYWorldSpace.z),
@@ -422,14 +467,6 @@ class ObjectBehavior {
             this.object.position
         );
         this.rotationBasisInverse = this.rotationBasis.clone().invert();
-
-        const pivotPoint = new THREE.Vector3(this.object.position.x, this.object.position.y, this.object.position.z);
-        // Horizontal rotation axis is the world y axis
-        this.horizontalRotationAxisPoint = pivotPoint.clone();
-        this.horizontalRotationAxisDirection = new THREE.Vector3(0, 1, 0); 
-
-        this.verticalRotationAxisPoint = pivotPoint.clone();
-        this.verticalRotationAxisDirection = new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z)
     }
     
     updateVisualizationCylinders() {
@@ -459,8 +496,14 @@ class ObjectBehavior {
         // Update camera basis vectors at start of interaction
         this.updateCameraBasisVectors();
         
+        // Convert screen coordinates to normalized trackball coordinates
+        const rect = renderer.domElement.getBoundingClientRect();
+        const normalizedX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        const normalizedY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        
         this.anchor = {
             mousePosition: { x: event.clientX, y: event.clientY },
+            normalizedStart: { x: normalizedX, y: normalizedY },
             matrix: this.object.matrix.clone()
         };
         
@@ -474,26 +517,38 @@ class ObjectBehavior {
     continueInteraction(event) {
         if (!this.anchor) return;
 
-        const deltaMove = {
-            x: event.clientX - this.anchor.mousePosition.x,
-            y: event.clientY - this.anchor.mousePosition.y
+        // Convert current screen coordinates to normalized trackball coordinates
+        const rect = renderer.domElement.getBoundingClientRect();
+        const normalizedX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        const normalizedY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        const currentNormalized = { x: normalizedX, y: normalizedY };
+        
+        // Apply sensitivity scaling
+        const startPos = {
+            x: this.anchor.normalizedStart.x * this.sensitivity,
+            y: this.anchor.normalizedStart.y * this.sensitivity
         };
-
-        // Create delta rotation matrices
-        // const deltaRotationY = MatrixUtils.createRotationY(deltaMove.x * this.rotationSpeed);
-        // const deltaRotationX = MatrixUtils.createRotationX(deltaMove.y * this.rotationSpeed);
-        // const deltaMatrix = MatrixUtils.multiplyMatrices(this.rotationBasisInverse, deltaRotationY, deltaRotationX, this.rotationBasis);
-
-        const deltaRotationHorizontal = MatrixUtils.createAxisRotation(this.horizontalRotationAxisPoint, this.horizontalRotationAxisDirection, deltaMove.x * this.rotationSpeed);
-        const deltaRotationVertical = MatrixUtils.createAxisRotation(this.verticalRotationAxisPoint, this.verticalRotationAxisDirection, deltaMove.y * this.rotationSpeed);
-        const deltaMatrix = MatrixUtils.multiplyMatrices(deltaRotationVertical, deltaRotationHorizontal);
-
-        // const deltaRotationHorizontal = MatrixUtils.createAxisRotation(this.horizontalRotationAxisPoint, this.horizontalRotationAxisDirection, deltaMove.x * this.rotationSpeed);
-        // const deltaMatrix = deltaRotationHorizontal.clone();
-
-        // const deltaRotationVertical = MatrixUtils.createAxisRotation(this.verticalRotationAxisPoint, this.verticalRotationAxisDirection, deltaMove.y * this.rotationSpeed);
-        // const deltaMatrix = deltaRotationVertical.clone();
-
+        const endPos = {
+            x: currentNormalized.x * this.sensitivity,
+            y: currentNormalized.y * this.sensitivity
+        };
+        
+        // Create virtual trackball rotation in camera space
+        let deltaMatrix = MatrixUtils.createTrackballRotation(
+            startPos, 
+            endPos, 
+            this.object.position, 
+            this.trackballRadius
+        );
+        
+        // Transform rotation to camera-aligned space
+        deltaMatrix = MatrixUtils.multiplyMatrices(
+            this.rotationBasisInverse, 
+            deltaMatrix, 
+            this.rotationBasis
+        );
+        
         // Apply: resultMatrix = deltaMatrix * anchorMatrix
         const resultMatrix = new THREE.Matrix4();
         resultMatrix.multiplyMatrices(deltaMatrix, this.anchor.matrix);
