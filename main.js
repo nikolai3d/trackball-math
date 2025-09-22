@@ -171,9 +171,18 @@ function createTrackballAxisLine(color) {
 function createTrackballAngleSector() {
     const maxSegments = 72;
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((maxSegments + 2) * 3), 3));
+    const positions = new Float32Array((maxSegments + 2) * 3);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const indices = new Uint16Array(maxSegments * 3);
+    for (let i = 0; i < maxSegments; i++) {
+        const indexBase = i * 3;
+        indices[indexBase] = 0;
+        indices[indexBase + 1] = i + 1;
+        indices[indexBase + 2] = i + 2;
+    }
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.setDrawRange(0, 0);
-    geometry.drawMode = THREE.TriangleFanDrawMode;
 
     const material = new THREE.MeshBasicMaterial({
         color: 0xff00ff,
@@ -313,8 +322,13 @@ function updateRotationAngleSectorVisualization(anchorVec, currentVec, axisVec, 
         return;
     }
 
+    if (!anchorVec || anchorVec.lengthSq() < 0.000001 || !currentVec || currentVec.lengthSq() < 0.000001) {
+        hideRotationAngleSector();
+        return;
+    }
+
     const axis = tempAxisVector.copy(axisVec).normalize();
-    const sectorRadius = trackballSphereRadius * 0.5;
+    const sectorRadius = trackballSphereRadius * 0.75;
     const startDir = tempStartDirection.copy(anchorVec).normalize();
     const endDir = tempEndDirection.copy(currentVec).normalize();
     const maxSectorSegments = rotationAngleSector.userData.maxSegments;
@@ -347,7 +361,7 @@ function updateRotationAngleSectorVisualization(anchorVec, currentVec, axisVec, 
     }
 
     rotationAngleSector.geometry.attributes.position.needsUpdate = true;
-    rotationAngleSector.geometry.setDrawRange(0, segments + 2);
+    rotationAngleSector.geometry.setDrawRange(0, segments * 3);
     rotationAngleSector.visible = true;
 
     const arcPositions = rotationArcLine.geometry.attributes.position.array;
