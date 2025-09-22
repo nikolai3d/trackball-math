@@ -77,6 +77,8 @@ const boundingSize = new THREE.Vector3();
 box.getSize(boundingSize);
 const boundingDiagonal = boundingSize.length();
 const trackballSphereRadius = boundingDiagonal * 0.65; // half diagonal scaled by 1.3
+const TRACKBALL_LONGITUDE_STEP_DEGREES = 10;
+const TRACKBALL_LATITUDE_STEP_DEGREES = 10;
 
 // Create a pivot group at the bounding box center
 const pivotGroup = new THREE.Group();
@@ -92,20 +94,73 @@ pivotGroup.add(zeppelin);
 camera.position.set(5, 3, 5);
 camera.lookAt(center);
 
-function createTrackballSphere(radius) {
-    const sphereGeometry = new THREE.SphereGeometry(radius, 32, 24);
-    const wireframeGeometry = new THREE.WireframeGeometry(sphereGeometry);
+function createTrackballSphere(
+    radius,
+    {
+        longitudeStepDegrees = TRACKBALL_LONGITUDE_STEP_DEGREES,
+        latitudeStepDegrees = TRACKBALL_LATITUDE_STEP_DEGREES
+    } = {}
+) {
+    const sphereGroup = new THREE.Group();
+    sphereGroup.frustumCulled = false;
+
     const material = new THREE.LineBasicMaterial({
         color: 0x66ccff,
-        opacity: 0.4,
+        opacity: 0.35,
         transparent: true,
         depthTest: false,
         depthWrite: false
     });
-    const wireframe = new THREE.LineSegments(wireframeGeometry, material);
-    wireframe.renderOrder = 5;
-    wireframe.frustumCulled = false;
-    return wireframe;
+
+    const degToRad = THREE.MathUtils.degToRad;
+    const latStep = Math.max(1, latitudeStepDegrees);
+    const lonStep = Math.max(1, longitudeStepDegrees);
+
+    // Latitude lines (parallels)
+    for (let lat = -90 + latStep; lat < 90; lat += latStep) {
+        const latRad = degToRad(lat);
+        const y = Math.sin(latRad) * radius;
+        const circleRadius = Math.cos(latRad) * radius;
+
+        const points = [];
+        const segments = Math.max(12, Math.round(360 / lonStep) * 2);
+        for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * Math.PI * 2;
+            const x = circleRadius * Math.cos(angle);
+            const z = circleRadius * Math.sin(angle);
+            points.push(new THREE.Vector3(x, y, z));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geometry, material);
+        line.frustumCulled = false;
+        line.renderOrder = 5;
+        sphereGroup.add(line);
+    }
+
+    // Longitude lines (meridians)
+    for (let lon = 0; lon < 360; lon += lonStep) {
+        const lonRad = degToRad(lon);
+        const points = [];
+        const segments = Math.max(12, Math.round(180 / latStep) * 2);
+        for (let i = 0; i <= segments; i++) {
+            const t = -Math.PI / 2 + (Math.PI * i) / segments;
+            const cosT = Math.cos(t);
+            const sinT = Math.sin(t);
+            const x = radius * cosT * Math.cos(lonRad);
+            const y = radius * sinT;
+            const z = radius * cosT * Math.sin(lonRad);
+            points.push(new THREE.Vector3(x, y, z));
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geometry, material);
+        line.frustumCulled = false;
+        line.renderOrder = 5;
+        sphereGroup.add(line);
+    }
+
+    return sphereGroup;
 }
 
 function createTrackballSpoke(color) {
