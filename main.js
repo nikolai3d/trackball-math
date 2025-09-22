@@ -620,7 +620,7 @@ function updateTrackballInfoPanel(clientX, clientY, normalized) {
 }
 
 function updateTrackballDebugDisplay(clientX, clientY, normalizedOverride = null) {
-    const normalized = normalizedOverride || objectBehavior.getNormalizedTrackballCoordinates(clientX, clientY);
+    const normalized = normalizedOverride || objectBehavior.getTrackballUnitCircleMouseCoordinates(clientX, clientY);
     const radiusSquared = normalized.x * normalized.x + normalized.y * normalized.y;
     setTrackballCircleOverlayState(radiusSquared <= 1);
     updateTrackballInfoPanel(clientX, clientY, normalized);
@@ -796,28 +796,27 @@ const MatrixUtils = {
     // Virtual Trackball mathematics
     // Map normalized screen coordinates [-1,1] to unit sphere surface
     // Uses Shoemake's trackball algorithm for robust sphere mapping
-    screenToSphere(x, y, radius = 1.0) {
+    screenUnitCircleToUnitSphere(x, y) {
         // Input x,y should be normalized screen coordinates in range [-1, 1]
         const lengthSquared = x*x + y*y;
-        const radiusSquared = radius * radius;
-        
-        if (lengthSquared <= radiusSquared * 0.5) {
-            // Inside the sphere - use true sphere equation: z = sqrt(r² - x² - y²)
-            const z = Math.sqrt(radiusSquared - lengthSquared);
+
+        if (lengthSquared <= 0.5) {
+            // Inside the circle - use true sphere equation: z = sqrt(r² - x² - y²)
+            const z = Math.sqrt(1.0 - lengthSquared);
             return new THREE.Vector3(x, y, z);
         } else {
-            // Outside sphere - use hyperbolic sheet to avoid discontinuity
+            // Outside circle - use hyperbolic sheet to avoid discontinuity
             // This creates a smooth transition at the sphere boundary
-            const z = radiusSquared / (2.0 * Math.sqrt(lengthSquared));
+            const z = 1.0 / (2.0 * Math.sqrt(lengthSquared));
             return new THREE.Vector3(x, y, z);
         }
     },
 
     // Create rotation matrix from virtual trackball movement
-    createTrackballRotation(startScreenPos, endScreenPos, pivotPoint, radius = 1.0) {
+    createTrackballRotation(startScreenUnitCircle, endScreenUnitCircle, pivotPoint) {
         // Map screen positions to sphere
-        const startSphere = this.screenToSphere(startScreenPos.x, startScreenPos.y, radius);
-        const endSphere = this.screenToSphere(endScreenPos.x, endScreenPos.y, radius);
+        const startSphere = this.screenUnitCircleToUnitSphere(startScreenUnitCircle.x, startScreenUnitCircle.y);
+        const endSphere = this.screenUnitCircleToUnitSphere(endScreenUnitCircle.x, endScreenUnitCircle.y);
         
         // Calculate rotation axis (cross product of sphere positions)
         const rotationAxis = new THREE.Vector3().crossVectors(startSphere, endSphere);
@@ -940,16 +939,16 @@ class ObjectBehavior {
         this.updateCameraBasisVectors();
 
         // Convert screen coordinates to normalized trackball coordinates
-        const normalizedStart = this.getNormalizedTrackballCoordinates(event.clientX, event.clientY);
+        const unitCircleMouseAnchor = this.getTrackballUnitCircleMouseCoordinates(event.clientX, event.clientY);
 
         this.anchor = {
             mousePosition: { x: event.clientX, y: event.clientY },
-            normalizedStart,
+            unitCircleMouseAnchor,
             matrix: this.object.matrix.clone()
         };
 
-        updateTrackballDebugDisplay(event.clientX, event.clientY, normalizedStart);
-        updateTrackballAnchorProjection(normalizedStart);
+        updateTrackballDebugDisplay(event.clientX, event.clientY, unitCircleMouseAnchor);
+        updateTrackballAnchorProjection(unitCircleMouseAnchor);
         hideRotationAxisVisualization();
         hideRotationAngleSector();
         resetRotationDiagnosticsDisplay();
@@ -965,15 +964,15 @@ class ObjectBehavior {
         if (!this.anchor) return;
 
         // Convert current screen coordinates to normalized trackball coordinates
-        const currentNormalized = this.getNormalizedTrackballCoordinates(event.clientX, event.clientY);
+        const unitCircleMouseCurrent = this.getTrackballUnitCircleMouseCoordinates(event.clientX, event.clientY);
 
-        updateTrackballDebugDisplay(event.clientX, event.clientY, currentNormalized);
-        const anchorProjection = updateTrackballAnchorProjection(this.anchor.normalizedStart);
+        updateTrackballDebugDisplay(event.clientX, event.clientY, unitCircleMouseCurrent);
+        const anchorProjection = updateTrackballAnchorProjection(this.anchor.unitCircleMouseAnchor);
         
         // Create virtual trackball rotation in camera space
         const trackballDelta = MatrixUtils.createTrackballRotation(
-            this.anchor.normalizedStart, 
-            currentNormalized, 
+            this.anchor.unitCircleMouseAnchor, 
+            unitCircleMouseCurrent, 
             this.pivotPoint
         );
         
@@ -1018,7 +1017,7 @@ class ObjectBehavior {
         }
     }
 
-    getNormalizedTrackballCoordinates(clientX, clientY) {
+    getTrackballUnitCircleMouseCoordinates(clientX, clientY) {
         const rect = renderer.domElement.getBoundingClientRect();
         const minDimension = Math.min(rect.width, rect.height);
 
@@ -1037,7 +1036,7 @@ class ObjectBehavior {
     }
 
     getTrackballProjectionPoint(normalized) {
-        const projection = MatrixUtils.screenToSphere(normalized.x, normalized.y, 1);
+        const projection = MatrixUtils.screenUnitCircleToUnitSphere(normalized.x, normalized.y, 1);
 
         if (projection.lengthSq() === 0) {
             return new THREE.Vector3(0, 0, trackballSphereRadius);
