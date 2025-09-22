@@ -149,6 +149,49 @@ function createTrackballSpoke(color) {
     return { group: spokeGroup, line, point };
 }
 
+function createTrackballAxisLine(color) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const material = new THREE.LineDashedMaterial({
+        color,
+        dashSize: 0.12,
+        gapSize: 0.08,
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+    });
+    const line = new THREE.Line(geometry, material);
+    line.visible = false;
+    line.frustumCulled = false;
+    line.renderOrder = 6;
+    return line;
+}
+
+function createTrackballAngleSector() {
+    const maxSegments = 72;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((maxSegments + 2) * 3), 3));
+    geometry.setDrawRange(0, 0);
+    geometry.drawMode = THREE.TriangleFanDrawMode;
+
+    const material = new THREE.MeshBasicMaterial({
+        color: 0xff00ff,
+        opacity: 0.35,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 7;
+    mesh.userData.maxSegments = maxSegments;
+    return mesh;
+}
+
 const trackballSphereGroup = new THREE.Group();
 trackballSphereGroup.position.copy(center);
 scene.add(trackballSphereGroup);
@@ -162,7 +205,17 @@ const currentSpoke = createTrackballSpoke(0xffffff);
 trackballSphereGroup.add(anchorSpoke.group);
 trackballSphereGroup.add(currentSpoke.group);
 
+const rotationAxisLine = createTrackballAxisLine(0xC19A6B);
+const rotationAngleSector = createTrackballAngleSector();
+trackballSphereGroup.add(rotationAxisLine);
+trackballSphereGroup.add(rotationAngleSector);
+
 const trackballSphereWorldPosition = new THREE.Vector3();
+const anchorProjectionVector = new THREE.Vector3();
+const currentProjectionVector = new THREE.Vector3();
+const rotationAxisWorld = new THREE.Vector3();
+let hasAnchorProjection = false;
+let hasCurrentProjection = false;
 
 function updateTrackballSpoke(spoke, position) {
     const linePositions = spoke.line.geometry.attributes.position.array;
@@ -192,6 +245,72 @@ function hideTrackballSpoke(spoke) {
     spoke.group.visible = false;
     spoke.line.visible = false;
     spoke.point.visible = false;
+}
+
+const tempAxisVector = new THREE.Vector3();
+const tempStartDirection = new THREE.Vector3();
+const tempSectorPoint = new THREE.Vector3();
+const tempQuaternion = new THREE.Quaternion();
+
+function updateRotationAxisVisualization(axisVec) {
+    if (!axisVec || axisVec.lengthSq() < 0.000001) {
+        hideRotationAxisVisualization();
+        return;
+    }
+
+    const direction = tempAxisVector.copy(axisVec).normalize();
+    const extent = trackballSphereRadius * 1.15;
+    const positions = rotationAxisLine.geometry.attributes.position.array;
+    positions[0] = -direction.x * extent;
+    positions[1] = -direction.y * extent;
+    positions[2] = -direction.z * extent;
+    positions[3] = direction.x * extent;
+    positions[4] = direction.y * extent;
+    positions[5] = direction.z * extent;
+    rotationAxisLine.geometry.attributes.position.needsUpdate = true;
+    rotationAxisLine.computeLineDistances();
+    rotationAxisLine.visible = true;
+}
+
+function hideRotationAxisVisualization() {
+    rotationAxisLine.visible = false;
+}
+
+function updateRotationAngleSectorVisualization(anchorVec, axisVec, angleRad) {
+    if (!axisVec || angleRad <= 0.0001 || !hasAnchorProjection || !hasCurrentProjection) {
+        hideRotationAngleSector();
+        return;
+    }
+
+    const axis = tempAxisVector.copy(axisVec).normalize();
+    const sectorRadius = trackballSphereRadius * 0.5;
+    const startDir = tempStartDirection.copy(anchorVec).normalize();
+    const maxSegments = rotationAngleSector.userData.maxSegments;
+    const segments = Math.max(2, Math.min(maxSegments, Math.ceil((angleRad / Math.PI) * maxSegments)));
+    const positions = rotationAngleSector.geometry.attributes.position.array;
+
+    positions[0] = 0;
+    positions[1] = 0;
+    positions[2] = 0;
+
+    for (let i = 0; i <= segments; i++) {
+        const t = (angleRad * i) / segments;
+        tempQuaternion.setFromAxisAngle(axis, t);
+        const point = tempSectorPoint.copy(startDir).applyQuaternion(tempQuaternion).multiplyScalar(sectorRadius);
+        const offset = (i + 1) * 3;
+        positions[offset + 0] = point.x;
+        positions[offset + 1] = point.y;
+        positions[offset + 2] = point.z;
+    }
+
+    rotationAngleSector.geometry.attributes.position.needsUpdate = true;
+    rotationAngleSector.geometry.setDrawRange(0, segments + 2);
+    rotationAngleSector.visible = true;
+}
+
+function hideRotationAngleSector() {
+    rotationAngleSector.visible = false;
+    rotationAngleSector.geometry.setDrawRange(0, 0);
 }
 
 // Create ground plane grid and world axis widget
@@ -312,12 +431,26 @@ Object.assign(trackballInfoPanel.style, {
     fontFamily: 'monospace',
     letterSpacing: '0.5px',
     zIndex: '120',
-    whiteSpace: 'nowrap',
     pointerEvents: 'none'
 });
 document.body.appendChild(trackballInfoPanel);
 
-const defaultTrackballInfoText = 'Overlay px (x: 0.00000, y: 0.00000) | Normalized (x: 0.00000, y: 0.00000)';
+const overlayInfoLine = document.createElement('div');
+overlayInfoLine.style.whiteSpace = 'nowrap';
+const axisInfoLine = document.createElement('div');
+axisInfoLine.style.color = '#d2b48c';
+axisInfoLine.style.whiteSpace = 'nowrap';
+const angleInfoLine = document.createElement('div');
+angleInfoLine.style.color = '#ff66ff';
+angleInfoLine.style.whiteSpace = 'nowrap';
+
+trackballInfoPanel.appendChild(overlayInfoLine);
+trackballInfoPanel.appendChild(axisInfoLine);
+trackballInfoPanel.appendChild(angleInfoLine);
+
+const defaultOverlayInfoText = 'Overlay px (x: 0.00000, y: 0.00000) | Normalized (x: 0.00000, y: 0.00000)';
+const defaultAxisInfoText = 'Rotation axis (x: 0.00000, y: 0.00000, z: 0.00000)';
+const defaultAngleInfoText = 'Rotation angle: 0.00000°';
 
 function updateTrackballCircleOverlaySize() {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -345,7 +478,7 @@ function updateTrackballInfoPanel(clientX, clientY, normalized) {
     const viewportRect = renderer.domElement.getBoundingClientRect();
     const pixelX = clientX - viewportRect.left;
     const pixelY = clientY - viewportRect.top;
-    trackballInfoPanel.textContent = `Overlay px (x: ${pixelX.toFixed(5)}, y: ${pixelY.toFixed(5)}) | Normalized (x: ${normalized.x.toFixed(5)}, y: ${normalized.y.toFixed(5)})`;
+    overlayInfoLine.textContent = `Overlay px (x: ${pixelX.toFixed(5)}, y: ${pixelY.toFixed(5)}) | Normalized (x: ${normalized.x.toFixed(5)}, y: ${normalized.y.toFixed(5)})`;
 }
 
 function updateTrackballDebugDisplay(clientX, clientY, normalizedOverride = null) {
@@ -357,8 +490,25 @@ function updateTrackballDebugDisplay(clientX, clientY, normalizedOverride = null
     return normalized;
 }
 
+function updateRotationDiagnosticsDisplay(axisVec, angleRad) {
+    if (axisVec && angleRad > 0.0001) {
+        const normalizedAxis = axisVec.clone().normalize();
+        axisInfoLine.textContent = `Rotation axis (x: ${normalizedAxis.x.toFixed(5)}, y: ${normalizedAxis.y.toFixed(5)}, z: ${normalizedAxis.z.toFixed(5)})`;
+        const degrees = THREE.MathUtils.radToDeg(Math.abs(angleRad));
+        angleInfoLine.textContent = `Rotation angle: ${degrees.toFixed(5)}°`;
+    } else {
+        resetRotationDiagnosticsDisplay();
+    }
+}
+
+function resetRotationDiagnosticsDisplay() {
+    axisInfoLine.textContent = defaultAxisInfoText;
+    angleInfoLine.textContent = defaultAngleInfoText;
+}
+
 updateTrackballCircleOverlaySize();
-trackballInfoPanel.textContent = defaultTrackballInfoText;
+overlayInfoLine.textContent = defaultOverlayInfoText;
+resetRotationDiagnosticsDisplay();
 setTrackballCircleOverlayState(false);
 
 // Shared matrix utility functions
@@ -575,15 +725,25 @@ const MatrixUtils = {
         const rotationAngle = startSphere.angleTo(endSphere);
         
         // Return identity matrix if no rotation needed
-        if (rotationAngle < 0.0001 || rotationAxis.length() < 0.0001) {
-            return new THREE.Matrix4(); // identity matrix
+        if (rotationAngle < 0.0001 || rotationAxis.lengthSq() < 0.0001) {
+            return {
+                matrix: new THREE.Matrix4(),
+                axis: new THREE.Vector3(0, 0, 0),
+                angle: 0
+            };
         }
         
         // Normalize the rotation axis
         rotationAxis.normalize();
         
         // Create rotation matrix around the calculated axis
-        return this.createAxisRotation(pivotPoint, rotationAxis, rotationAngle);
+        const matrix = this.createAxisRotation(pivotPoint, rotationAxis, rotationAngle);
+        
+        return {
+            matrix,
+            axis: rotationAxis,
+            angle: rotationAngle
+        };
     }
 };
 
@@ -690,6 +850,9 @@ class ObjectBehavior {
 
         updateTrackballDebugDisplay(event.clientX, event.clientY, normalizedStart);
         updateTrackballAnchorProjection(normalizedStart);
+        hideRotationAxisVisualization();
+        hideRotationAngleSector();
+        resetRotationDiagnosticsDisplay();
 
         // Show visualization cylinders
         this.updateVisualizationCylinders();
@@ -705,7 +868,7 @@ class ObjectBehavior {
         const currentNormalized = this.getNormalizedTrackballCoordinates(event.clientX, event.clientY);
 
         updateTrackballDebugDisplay(event.clientX, event.clientY, currentNormalized);
-        updateTrackballAnchorProjection(this.anchor.normalizedStart);
+        const anchorProjection = updateTrackballAnchorProjection(this.anchor.normalizedStart);
         
         // Apply sensitivity scaling
         const startPos = {
@@ -718,7 +881,7 @@ class ObjectBehavior {
         };
         
         // Create virtual trackball rotation in camera space
-        const trackballDeltaMatrix = MatrixUtils.createTrackballRotation(
+        const trackballDelta = MatrixUtils.createTrackballRotation(
             startPos, 
             endPos, 
             this.object.position, 
@@ -728,7 +891,7 @@ class ObjectBehavior {
         // Transform rotation to camera-aligned space
        const deltaMatrix = MatrixUtils.multiplyMatrices(
             this.rotationBasisInverse, 
-            trackballDeltaMatrix, 
+            trackballDelta.matrix, 
             this.rotationBasis
         );
         
@@ -739,6 +902,31 @@ class ObjectBehavior {
         // Update object matrix
         this.object.matrix.copy(resultMatrix);
         this.object.matrixAutoUpdate = false;
+
+        if (anchorProjection && hasCurrentProjection) {
+            const axisCamera = trackballDelta.axis;
+            let axisWorldForDiagnostics = null;
+
+            if (axisCamera && axisCamera.lengthSq() > 0.000001) {
+                rotationAxisWorld.set(
+                    this.cameraXWorldSpace.x * axisCamera.x + this.cameraYWorldSpace.x * axisCamera.y + this.cameraZWorldSpace.x * axisCamera.z,
+                    this.cameraXWorldSpace.y * axisCamera.x + this.cameraYWorldSpace.y * axisCamera.y + this.cameraZWorldSpace.y * axisCamera.z,
+                    this.cameraXWorldSpace.z * axisCamera.x + this.cameraYWorldSpace.z * axisCamera.y + this.cameraZWorldSpace.z * axisCamera.z
+                );
+                if (rotationAxisWorld.lengthSq() > 0.000001) {
+                    rotationAxisWorld.normalize();
+                    axisWorldForDiagnostics = rotationAxisWorld;
+                }
+            }
+
+            updateRotationAxisVisualization(axisCamera);
+            updateRotationAngleSectorVisualization(anchorProjectionVector, axisCamera, trackballDelta.angle);
+            updateRotationDiagnosticsDisplay(axisWorldForDiagnostics, trackballDelta.angle);
+        } else {
+            hideRotationAxisVisualization();
+            hideRotationAngleSector();
+            resetRotationDiagnosticsDisplay();
+        }
     }
 
     getNormalizedTrackballCoordinates(clientX, clientY) {
@@ -792,6 +980,10 @@ class ObjectBehavior {
         this.zCylinder.visible = false;
 
         hideTrackballSpoke(anchorSpoke);
+        hasAnchorProjection = false;
+        hideRotationAxisVisualization();
+        hideRotationAngleSector();
+        resetRotationDiagnosticsDisplay();
     }
 }
 
@@ -864,19 +1056,30 @@ const objectBehavior = new ObjectBehavior(camera, pivotGroup, scene);
 const cameraBehavior = new CameraBehavior(camera, center);
 
 function updateTrackballAnchorProjection(normalized) {
-    if (!normalized) return;
+    if (!normalized) {
+        hideTrackballSpoke(anchorSpoke);
+        hasAnchorProjection = false;
+        return null;
+    }
     const projection = objectBehavior.getTrackballProjectionPoint(normalized);
-    updateTrackballSpoke(anchorSpoke, projection);
+    anchorProjectionVector.copy(projection);
+    updateTrackballSpoke(anchorSpoke, anchorProjectionVector);
+    hasAnchorProjection = true;
+    return anchorProjectionVector;
 }
 
 function updateTrackballCurrentProjection(normalized) {
     if (!normalized) {
         hideTrackballSpoke(currentSpoke);
-        return;
+        hasCurrentProjection = false;
+        return null;
     }
 
     const projection = objectBehavior.getTrackballProjectionPoint(normalized);
-    updateTrackballSpoke(currentSpoke, projection);
+    currentProjectionVector.copy(projection);
+    updateTrackballSpoke(currentSpoke, currentProjectionVector);
+    hasCurrentProjection = true;
+    return currentProjectionVector;
 }
 
 function updateTrackballCircleDebug(event) {
@@ -886,9 +1089,14 @@ function updateTrackballCircleDebug(event) {
 window.addEventListener('mousemove', updateTrackballCircleDebug);
 window.addEventListener('mouseleave', () => {
     setTrackballCircleOverlayState(false);
-    trackballInfoPanel.textContent = defaultTrackballInfoText;
+    overlayInfoLine.textContent = defaultOverlayInfoText;
+    resetRotationDiagnosticsDisplay();
     hideTrackballSpoke(currentSpoke);
     hideTrackballSpoke(anchorSpoke);
+    hasCurrentProjection = false;
+    hasAnchorProjection = false;
+    hideRotationAxisVisualization();
+    hideRotationAngleSector();
 });
 
 // Mouse interaction state
@@ -945,9 +1153,14 @@ function onWindowResize() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     updateTrackballCircleOverlaySize();
-    trackballInfoPanel.textContent = defaultTrackballInfoText;
+    overlayInfoLine.textContent = defaultOverlayInfoText;
+    resetRotationDiagnosticsDisplay();
     hideTrackballSpoke(currentSpoke);
     hideTrackballSpoke(anchorSpoke);
+    hasCurrentProjection = false;
+    hasAnchorProjection = false;
+    hideRotationAxisVisualization();
+    hideRotationAngleSector();
 }
 window.addEventListener('resize', onWindowResize);
 
