@@ -855,8 +855,6 @@ class ObjectBehavior {
         this.object = object;
         this.scene = scene;
         this.anchor = null;
-        this.trackballRadius = 1.0;
-        this.sensitivity = 1.0;
         this.pivotPoint = pivotPoint.clone();
         
         // Persistent camera basis vectors
@@ -972,22 +970,11 @@ class ObjectBehavior {
         updateTrackballDebugDisplay(event.clientX, event.clientY, currentNormalized);
         const anchorProjection = updateTrackballAnchorProjection(this.anchor.normalizedStart);
         
-        // Apply sensitivity scaling
-        const startPos = {
-            x: this.anchor.normalizedStart.x * this.sensitivity,
-            y: this.anchor.normalizedStart.y * this.sensitivity
-        };
-        const endPos = {
-            x: currentNormalized.x * this.sensitivity,
-            y: currentNormalized.y * this.sensitivity
-        };
-        
         // Create virtual trackball rotation in camera space
         const trackballDelta = MatrixUtils.createTrackballRotation(
-            startPos, 
-            endPos, 
-            this.pivotPoint, 
-            this.trackballRadius
+            this.anchor.normalizedStart, 
+            currentNormalized, 
+            this.pivotPoint
         );
         
         // Transform rotation to camera-aligned space
@@ -1050,26 +1037,13 @@ class ObjectBehavior {
     }
 
     getTrackballProjectionPoint(normalized) {
-        const radius = this.trackballRadius;
-        const scaledX = normalized.x * this.sensitivity;
-        const scaledY = normalized.y * this.sensitivity;
-        const projection = MatrixUtils.screenToSphere(scaledX, scaledY, radius);
+        const projection = MatrixUtils.screenToSphere(normalized.x, normalized.y, 1);
 
         if (projection.lengthSq() === 0) {
             return new THREE.Vector3(0, 0, trackballSphereRadius);
         }
 
-        if (radius !== 0) {
-            projection.divideScalar(radius);
-        }
-
-        const lengthSq = projection.lengthSq();
-        if (lengthSq > 0) {
-            projection.normalize();
-        } else {
-            projection.set(0, 0, 1);
-        }
-
+        projection.normalize();
         return projection.multiplyScalar(trackballSphereRadius);
     }
 
