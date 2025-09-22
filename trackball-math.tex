@@ -1,0 +1,72 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Camera-Aligned Virtual Trackball Mathematics}
+\author{Repository Notes}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Pivot Selection and Rotation Basis}
+Let $\mathbf{p} \in \mathbb{R}^3$ denote the rotation pivot, chosen as the centroid of the object's axis-aligned bounding box. Select three non-collinear world-space vectors $\mathbf{u}, \mathbf{v}, \mathbf{w}$ and apply Gram--Schmidt orthogonalisation to obtain an orthonormal basis $\{\hat{\mathbf{u}}, \hat{\mathbf{v}}, \hat{\mathbf{w}}\}$. Construct the basis transform
+\begin{equation}
+    B =
+    \begin{bmatrix}
+        \hat{\mathbf{u}}^{\top}\\
+        \hat{\mathbf{v}}^{\top}\\
+        \hat{\mathbf{w}}^{\top}
+    \end{bmatrix} \in \mathrm{SO}(3),
+\end{equation}
+with forward and inverse mappings
+\begin{equation}
+    T(\mathbf{x}) = B(\mathbf{x} - \mathbf{p}), \qquad
+    T^{-1}(\mathbf{y}) = B^{\top}\mathbf{y} + \mathbf{p}.
+\end{equation}
+These operators translate points to the pivot, align them to the camera-informed rotation basis, and provide the conjugation needed for world-space rotations about $\mathbf{p}$.
+
+\section{Trackball Projection}
+Mouse pixels $(m_x, m_y)$ convert to normalised device coordinates (NDC)
+\begin{equation}
+    x = \frac{2(m_x - m_x^{\min})}{m_x^{\max} - m_x^{\min}} - 1, \qquad
+    y = 1 - \frac{2(m_y - m_y^{\min})}{m_y^{\max} - m_y^{\min}}.
+\end{equation}
+Using the minimum viewport dimension $s = \min(w, h) / 2$, rescale NDC to a unit disk:
+\begin{equation}
+    \tilde{x} = x \frac{w}{2s}, \qquad \tilde{y} = y \frac{h}{2s}.
+\end{equation}
+Project $(\tilde{x}, \tilde{y})$ onto the Shoemake virtual trackball sphere $\mathbb{S}^2$:
+\begin{equation}
+    \mathbf{q}(\tilde{x}, \tilde{y}) =
+    \begin{cases}
+        (\tilde{x},\tilde{y},\sqrt{1-\tilde{x}^2-\tilde{y}^2}) & \text{if } \tilde{x}^2+\tilde{y}^2 \le \tfrac{1}{2},\\[4pt]
+        \left(\tilde{x},\tilde{y},\dfrac{1}{2\sqrt{\tilde{x}^2+\tilde{y}^2}}\right) & \text{otherwise.}
+    \end{cases}
+\end{equation}
+Given start and end points $\mathbf{q}_0, \mathbf{q}_1 \in \mathbb{S}^2$ (expressed in camera space), compute the rotation axis and angle
+\begin{equation}
+    \mathbf{a} = \mathbf{q}_0 \times \mathbf{q}_1, \qquad
+    \theta = \arccos(\mathbf{q}_0 \cdot \mathbf{q}_1).
+\end{equation}
+If $\|\mathbf{a}\| < \varepsilon$ or $\theta < \varepsilon$, use the identity; otherwise, normalise $\hat{\mathbf{a}} = \mathbf{a} / \|\mathbf{a}\|$.
+
+\section{Rotation Synthesis}
+Transform a point $\mathbf{x}$ into the pivot-aligned basis, rotate around $\hat{\mathbf{a}}$, and map back:
+\begin{equation}
+    \mathbf{y} = T(\mathbf{x}), \qquad
+    R(\hat{\mathbf{a}}, \theta) = I + \sin\theta\,A + (1-\cos\theta)A^2,
+\end{equation}
+where $A$ is the skew-symmetric matrix of $\hat{\mathbf{a}}$. The final world-space point is
+\begin{equation}
+    \mathbf{x}' = T^{-1}\big(R(\hat{\mathbf{a}}, \theta)\,\mathbf{y}\big).
+\end{equation}
+Equivalently, the full trackball transform is the conjugation
+\begin{equation}
+    M = T^{-1}\;R(\hat{\mathbf{a}}, \theta)\;T,
+\end{equation}
+so that applying $M$ rotates the object about the pivot $\mathbf{p}$ in accordance with the virtual trackball interaction.
+
+\end{document}
