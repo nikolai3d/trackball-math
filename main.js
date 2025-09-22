@@ -383,7 +383,7 @@ function updateRotationAngleSectorVisualization(anchorVec, currentVec, axisVec, 
     }
 
     const axis = tempAxisVector.copy(axisVec).normalize();
-    const sectorRadius = trackballSphereRadius * 0.75;
+    const sectorRadius = trackballSphereRadius * 0.5;
     const startDir = tempStartDirection.copy(anchorVec).normalize();
     const endDir = tempEndDirection.copy(currentVec).normalize();
     const maxSectorSegments = rotationAngleSector.userData.maxSegments;
@@ -744,41 +744,6 @@ const MatrixUtils = {
         return result;
     },
 
-    // Create inverse transform from rotational basis back to world space
-    createInverseRotationalBasisTransform(xRotation, yRotation, zRotation, pivotPoint) {
-        // Clone and orthogonalize basis vectors (same as above)
-        const x = xRotation.clone().normalize();
-        const y = yRotation.clone();
-        const z = zRotation.clone();
-        
-        // Orthogonalize y and z
-        const yDotX = y.dot(x);
-        y.sub(x.clone().multiplyScalar(yDotX)).normalize();
-        
-        const zDotX = z.dot(x);
-        const zDotY = z.dot(y);
-        z.sub(x.clone().multiplyScalar(zDotX));
-        z.sub(y.clone().multiplyScalar(zDotY)).normalize();
-        
-        // Create inverse basis matrix (local -> world transform)
-        // This matrix has the orthogonalized basis vectors as columns
-        const inverseBasisMatrix = new THREE.Matrix4().set(
-            x.x, y.x, z.x, 0,
-            x.y, y.y, z.y, 0,
-            x.z, y.z, z.z, 0,
-            0,   0,   0,   1
-        );
-        
-        // Create translation to move origin back to pivot
-        const inverseTranslationMatrix = this.createTranslation(pivotPoint.x, pivotPoint.y, pivotPoint.z);
-        
-        // Combine: first transform basis, then translate back to pivot
-        const result = new THREE.Matrix4();
-        result.multiplyMatrices(inverseTranslationMatrix, inverseBasisMatrix);
-        
-        return result;
-    },
-
     // Multiply multiple matrices in sequence: A * B * C * D * ...
     multiplyMatrices(...matrices) {
         if (matrices.length < 2) {
@@ -822,9 +787,7 @@ const MatrixUtils = {
         const zRotation = this.createRotationZ(angle);
         
         // Step 3: Transform back to world space
-        const fromBasisTransform = this.createInverseRotationalBasisTransform(
-            xAxis, yAxis, zAxis, axisPoint
-        );
+        const fromBasisTransform = toBasisTransform.clone().invert();
         
         // Combine all transformations: fromBasis * zRotation * toBasis
         return this.multiplyMatrices(fromBasisTransform, zRotation, toBasisTransform);
@@ -887,13 +850,14 @@ const MatrixUtils = {
 
 // Object behavior class for trackball rotation using 4x4 matrices
 class ObjectBehavior {
-    constructor(camera, object, scene) {
+    constructor(camera, object, scene, pivotPoint) {
         this.camera = camera;
         this.object = object;
         this.scene = scene;
         this.anchor = null;
         this.trackballRadius = 1.0;
         this.sensitivity = 1.0;
+        this.pivotPoint = pivotPoint.clone();
         
         // Persistent camera basis vectors
         this.cameraXWorldSpace = new THREE.Vector4(1, 0, 0, 0);
@@ -945,15 +909,15 @@ class ObjectBehavior {
             new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z),
             new THREE.Vector3(this.cameraYWorldSpace.x, this.cameraYWorldSpace.y, this.cameraYWorldSpace.z),
             new THREE.Vector3(this.cameraZWorldSpace.x, this.cameraZWorldSpace.y, this.cameraZWorldSpace.z),
-            this.object.position
+            this.pivotPoint
         );
         this.rotationBasisInverse = this.rotationBasis.clone().invert();
     }
     
     updateVisualizationCylinders() {
-        const pivotPos = this.object.position;
+        const pivotPos = this.pivotPoint;
         const axisLength = 1.0;
-        
+
         // X-axis cylinder (red)
         const xDir = new THREE.Vector3(this.cameraXWorldSpace.x, this.cameraXWorldSpace.y, this.cameraXWorldSpace.z).normalize();
         this.xCylinder.position.copy(pivotPos).add(xDir.clone().multiplyScalar(axisLength * 0.5));
@@ -1022,7 +986,7 @@ class ObjectBehavior {
         const trackballDelta = MatrixUtils.createTrackballRotation(
             startPos, 
             endPos, 
-            this.object.position, 
+            this.pivotPoint, 
             this.trackballRadius
         );
         
@@ -1046,15 +1010,15 @@ class ObjectBehavior {
             let axisWorldForDiagnostics = null;
 
             if (axisCamera && axisCamera.lengthSq() > 0.000001) {
-                rotationAxisWorld.set(
-                    this.cameraXWorldSpace.x * axisCamera.x + this.cameraYWorldSpace.x * axisCamera.y + this.cameraZWorldSpace.x * axisCamera.z,
-                    this.cameraXWorldSpace.y * axisCamera.x + this.cameraYWorldSpace.y * axisCamera.y + this.cameraZWorldSpace.y * axisCamera.z,
-                    this.cameraXWorldSpace.z * axisCamera.x + this.cameraYWorldSpace.z * axisCamera.y + this.cameraZWorldSpace.z * axisCamera.z
-                );
-                if (rotationAxisWorld.lengthSq() > 0.000001) {
-                    rotationAxisWorld.normalize();
-                    axisWorldForDiagnostics = rotationAxisWorld;
-                }
+
+                const rotationAxisWorld4 = new THREE.Vector4(axisCamera.x, axisCamera.y, axisCamera.z, 0);
+                rotationAxisWorld4.applyMatrix4(this.rotationBasisInverse);
+                rotationAxisWorld.x = rotationAxisWorld4.x;
+                rotationAxisWorld.y = rotationAxisWorld4.y;
+                rotationAxisWorld.z = rotationAxisWorld4.z;
+                
+                rotationAxisWorld.normalize();
+                axisWorldForDiagnostics = rotationAxisWorld;
             }
 
             updateRotationAxisVisualization(axisCamera);
@@ -1190,7 +1154,7 @@ class CameraBehavior {
 }
 
 // Create behavior instances
-const objectBehavior = new ObjectBehavior(camera, pivotGroup, scene);
+const objectBehavior = new ObjectBehavior(camera, pivotGroup, scene, center.clone());
 const cameraBehavior = new CameraBehavior(camera, center);
 
 function updateTrackballAnchorProjection(normalized) {
@@ -1303,7 +1267,7 @@ function onWindowResize() {
 window.addEventListener('resize', onWindowResize);
 
 function updateTrackballSphereDebug() {
-    trackballSphereGroup.position.copy(objectBehavior.object.position);
+    trackballSphereGroup.position.copy(objectBehavior.pivotPoint);
     trackballSphereGroup.quaternion.copy(camera.quaternion);
 }
 
