@@ -192,6 +192,30 @@ function createTrackballAngleSector() {
     return mesh;
 }
 
+function createTrackballArcLine(color) {
+    const maxSegments = 128;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((maxSegments + 1) * 3), 3));
+    geometry.setDrawRange(0, 0);
+
+    const material = new THREE.LineDashedMaterial({
+        color,
+        dashSize: 0.08,
+        gapSize: 0.05,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        depthWrite: false
+    });
+
+    const line = new THREE.Line(geometry, material);
+    line.visible = false;
+    line.frustumCulled = false;
+    line.renderOrder = 7;
+    line.userData.maxSegments = maxSegments;
+    return line;
+}
+
 const trackballSphereGroup = new THREE.Group();
 trackballSphereGroup.position.copy(center);
 scene.add(trackballSphereGroup);
@@ -207,8 +231,13 @@ trackballSphereGroup.add(currentSpoke.group);
 
 const rotationAxisLine = createTrackballAxisLine(0xC19A6B);
 const rotationAngleSector = createTrackballAngleSector();
+const rotationArcLine = createTrackballArcLine(0xff66ff);
 trackballSphereGroup.add(rotationAxisLine);
 trackballSphereGroup.add(rotationAngleSector);
+trackballSphereGroup.add(rotationArcLine);
+
+hideRotationAxisVisualization();
+hideRotationAngleSector();
 
 const trackballSphereWorldPosition = new THREE.Vector3();
 const anchorProjectionVector = new THREE.Vector3();
@@ -249,8 +278,10 @@ function hideTrackballSpoke(spoke) {
 
 const tempAxisVector = new THREE.Vector3();
 const tempStartDirection = new THREE.Vector3();
+const tempEndDirection = new THREE.Vector3();
 const tempSectorPoint = new THREE.Vector3();
 const tempQuaternion = new THREE.Quaternion();
+const tempArcDirection = new THREE.Vector3();
 
 function updateRotationAxisVisualization(axisVec) {
     if (!axisVec || axisVec.lengthSq() < 0.000001) {
@@ -276,7 +307,7 @@ function hideRotationAxisVisualization() {
     rotationAxisLine.visible = false;
 }
 
-function updateRotationAngleSectorVisualization(anchorVec, axisVec, angleRad) {
+function updateRotationAngleSectorVisualization(anchorVec, currentVec, axisVec, angleRad) {
     if (!axisVec || angleRad <= 0.0001 || !hasAnchorProjection || !hasCurrentProjection) {
         hideRotationAngleSector();
         return;
@@ -285,32 +316,70 @@ function updateRotationAngleSectorVisualization(anchorVec, axisVec, angleRad) {
     const axis = tempAxisVector.copy(axisVec).normalize();
     const sectorRadius = trackballSphereRadius * 0.5;
     const startDir = tempStartDirection.copy(anchorVec).normalize();
-    const maxSegments = rotationAngleSector.userData.maxSegments;
-    const segments = Math.max(2, Math.min(maxSegments, Math.ceil((angleRad / Math.PI) * maxSegments)));
-    const positions = rotationAngleSector.geometry.attributes.position.array;
+    const endDir = tempEndDirection.copy(currentVec).normalize();
+    const maxSectorSegments = rotationAngleSector.userData.maxSegments;
+    const maxArcSegments = rotationArcLine.userData.maxSegments;
+    const baseSegments = Math.max(2, Math.ceil((angleRad / Math.PI) * maxSectorSegments));
+    const segments = Math.min(maxSectorSegments, baseSegments);
+    const arcSegments = Math.min(maxArcSegments, Math.max(2, baseSegments));
 
-    positions[0] = 0;
-    positions[1] = 0;
-    positions[2] = 0;
+    const sectorPositions = rotationAngleSector.geometry.attributes.position.array;
+    sectorPositions[0] = 0;
+    sectorPositions[1] = 0;
+    sectorPositions[2] = 0;
 
     for (let i = 0; i <= segments; i++) {
-        const t = (angleRad * i) / segments;
-        tempQuaternion.setFromAxisAngle(axis, t);
-        const point = tempSectorPoint.copy(startDir).applyQuaternion(tempQuaternion).multiplyScalar(sectorRadius);
+        const interp = i / segments;
+        let dir;
+        if (i === segments) {
+            dir = endDir;
+        } else if (i === 0) {
+            dir = startDir;
+        } else {
+            tempQuaternion.setFromAxisAngle(axis, angleRad * interp);
+            dir = tempSectorPoint.copy(startDir).applyQuaternion(tempQuaternion).normalize();
+        }
+
         const offset = (i + 1) * 3;
-        positions[offset + 0] = point.x;
-        positions[offset + 1] = point.y;
-        positions[offset + 2] = point.z;
+        sectorPositions[offset + 0] = dir.x * sectorRadius;
+        sectorPositions[offset + 1] = dir.y * sectorRadius;
+        sectorPositions[offset + 2] = dir.z * sectorRadius;
     }
 
     rotationAngleSector.geometry.attributes.position.needsUpdate = true;
     rotationAngleSector.geometry.setDrawRange(0, segments + 2);
     rotationAngleSector.visible = true;
+
+    const arcPositions = rotationArcLine.geometry.attributes.position.array;
+    for (let i = 0; i <= arcSegments; i++) {
+        const interp = i / arcSegments;
+        let dir;
+        if (i === arcSegments) {
+            dir = endDir;
+        } else if (i === 0) {
+            dir = startDir;
+        } else {
+            tempQuaternion.setFromAxisAngle(axis, angleRad * interp);
+            dir = tempArcDirection.copy(startDir).applyQuaternion(tempQuaternion).normalize();
+        }
+
+        const offset = i * 3;
+        arcPositions[offset + 0] = dir.x * trackballSphereRadius;
+        arcPositions[offset + 1] = dir.y * trackballSphereRadius;
+        arcPositions[offset + 2] = dir.z * trackballSphereRadius;
+    }
+
+    rotationArcLine.geometry.attributes.position.needsUpdate = true;
+    rotationArcLine.geometry.setDrawRange(0, arcSegments + 1);
+    rotationArcLine.visible = true;
+    rotationArcLine.computeLineDistances();
 }
 
 function hideRotationAngleSector() {
     rotationAngleSector.visible = false;
     rotationAngleSector.geometry.setDrawRange(0, 0);
+    rotationArcLine.visible = false;
+    rotationArcLine.geometry.setDrawRange(0, 0);
 }
 
 // Create ground plane grid and world axis widget
@@ -920,7 +989,7 @@ class ObjectBehavior {
             }
 
             updateRotationAxisVisualization(axisCamera);
-            updateRotationAngleSectorVisualization(anchorProjectionVector, axisCamera, trackballDelta.angle);
+            updateRotationAngleSectorVisualization(anchorProjectionVector, currentProjectionVector, axisCamera, trackballDelta.angle);
             updateRotationDiagnosticsDisplay(axisWorldForDiagnostics, trackballDelta.angle);
         } else {
             hideRotationAxisVisualization();
